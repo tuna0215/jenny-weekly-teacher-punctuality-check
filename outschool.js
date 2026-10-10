@@ -12,7 +12,7 @@ async function login(page, { username, password }) {
     await page.goto(canonicalLoginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
   }
   await page.waitForSelector(emailSel, { visible: true, timeout: 15000 });
-  await page.type(emailSel, username, { delay: 30 });
+  await page.type(emailSel, username.trim(), { delay: 30 });
   if (!(await page.$(passSel))) {
     await page.keyboard.press('Enter');
   }
@@ -20,6 +20,12 @@ async function login(page, { username, password }) {
   await page.type(passSel, password, { delay: 30 });
   const submitSel = 'form:has([data-test-id="login-form-email"]) button[type="submit"]';
   await page.waitForSelector(submitSel, { visible: true, timeout: 15000 });
+  await page.waitForFunction((selector) => {
+    const button = document.querySelector(selector);
+    return button && !button.disabled && button.getAttribute('aria-disabled') !== 'true';
+  }, { timeout: 30000 }, submitSel).catch(() => {
+    throw new Error('LOGIN_CHALLENGE (login form did not become ready)');
+  });
   await page.click(submitSel);
   await page.waitForNetworkIdle({ idleTime: 1500, timeout: 30000 }).catch(() => {});
   const text = (await page.evaluate(() => document.body.innerText)).toLowerCase();
@@ -28,7 +34,7 @@ async function login(page, { username, password }) {
   if (stillOnLogin && (await page.$(passSel))) {
     const formText = await page.$eval(emailSel, (input) => input.closest('form')?.innerText || '');
     const message = formText.split('\n').map((line) => line.trim()).find((line) =>
-      /incorrect|invalid|unable|could not|try again|error|captcha|verify|verification|two-step|2-step/i.test(line));
+      /please check|incorrect|invalid|unable|could not|try again|error|captcha|verify|verification|two-step|2-step/i.test(line));
     throw new Error(`LOGIN_FAILED (${message || 'Outschool rejected the credentials'})`);
   }
 }
