@@ -40,9 +40,6 @@ const operationError = (json) => {
   return String(result?.message || result?.MESSAGE || 'Zoho operation failed').slice(0, 300);
 };
 
-const secretNameOf = (secret) => secret?.SECRETNAME ?? secret?.secretName ?? secret?.secretname
-  ?? secret?.PASSWORDNAME ?? secret?.passwordName ?? secret?.NAME ?? secret?.name;
-
 const withQuery = (path, values) => {
   const queryAt = path.indexOf('?');
   const base = queryAt === -1 ? path : path.slice(0, queryAt);
@@ -141,10 +138,10 @@ async function run({ includeSecret = false } = {}) {
     const secrets = Array.isArray(listDetails)
       ? listDetails
       : listDetails?.secrets || listDetails?.SECRETS || list.secrets || [];
-    const matches = Array.isArray(secrets)
-      ? secrets.filter((secret) => secretNameOf(secret) === c.secretName)
-      : [];
-    const first = matches.length === 1 ? matches[0] : undefined;
+    const want = c.secretName.toLowerCase();
+    const first = Array.isArray(secrets)
+      ? secrets.find((s) => Object.values(s).some((v) => typeof v === 'string' && v.toLowerCase() === want))
+      : undefined;
     const keysOf = (o) => (o && typeof o === 'object' ? Object.keys(o).slice(0, 15) : typeof o);
     const op = list.operation;
     const result = op && (op.result || op.Result);
@@ -153,10 +150,8 @@ async function run({ includeSecret = false } = {}) {
       : result;
     mark('list_shape', true,
       `operation keys: ${JSON.stringify(keysOf(op))}; result: ${JSON.stringify(resultSummary)}; details keys: ${JSON.stringify(keysOf(op && (op.Details || op.details)))}; top-level keys: ${JSON.stringify(keysOf(list))}; count: ${Array.isArray(secrets) ? secrets.length : 'n/a'}`);
-    mark('find_secret', !!first, first ? undefined : `Expected exactly one secret named "${c.secretName}"; found ${matches.length} exact matches`);
-    if (!first) {
-      throw new Error(matches.length > 1 ? 'Multiple secrets have the requested name' : 'Secret not found');
-    }
+    mark('find_secret', !!first, first ? undefined : `No exact match for secret "${c.secretName}"`);
+    if (!first) throw new Error('Secret not found');
 
     const id = first.SECRETID || first.secretid || first.secretId;
     const fullDetails = id ? details(await zget(c, token, `${c.secretsPath}/${id}`)) : first;
