@@ -93,6 +93,7 @@ async function withPage(fn) {
   const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
   try {
     const page = await browser.newPage();
+    await page.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
     await page.setViewport({ width: 1280, height: 900 });
     let credentials;
     if (!(await hasAuthenticatedSession(page))) {
