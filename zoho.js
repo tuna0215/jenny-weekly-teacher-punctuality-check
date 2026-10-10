@@ -132,6 +132,7 @@ async function run({ includeSecret = false } = {}) {
 
     const listPath = withQuery(c.secretsPath, {
       isAsc: 'true',
+      pageNum: '0',
       rowPerPage: '50',
       passwordName: c.secretName,
     });
