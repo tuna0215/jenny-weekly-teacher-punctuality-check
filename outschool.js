@@ -3,15 +3,20 @@ const puppeteer = require('puppeteer-core');
 const zoho = require('./zoho');
 
 async function login(page, { username, password }) {
-  await page.goto(process.env.OUTSCHOOL_LOGIN_URL || 'https://outschool.com/login', { waitUntil: 'networkidle2', timeout: 45000 });
-  const emailSel = 'input[type="email"], input[name="email"], input[name="username"]';
-  const passSel = 'input[type="password"]';
-  await page.waitForSelector(emailSel, { timeout: 15000 });
+  const canonicalLoginUrl = 'https://outschool.com/users/login';
+  const configuredLoginUrl = process.env.OUTSCHOOL_LOGIN_URL || canonicalLoginUrl;
+  await page.goto(configuredLoginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+  const emailSel = '[data-test-id="login-form-email"]';
+  const passSel = '[data-test-id="login-form-password"]';
+  if (!(await page.$(emailSel)) && /^https:\/\/outschool\.com\/login\/?$/i.test(configuredLoginUrl)) {
+    await page.goto(canonicalLoginUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+  }
+  await page.waitForSelector(emailSel, { visible: true, timeout: 15000 });
   await page.type(emailSel, username, { delay: 30 });
   if (!(await page.$(passSel))) {
     await page.keyboard.press('Enter');
-    await page.waitForSelector(passSel, { timeout: 15000 }).catch(() => {});
   }
+  await page.waitForSelector(passSel, { visible: true, timeout: 15000 });
   await page.type(passSel, password, { delay: 30 });
   await page.keyboard.press('Enter');
   await page.waitForNetworkIdle({ idleTime: 1500, timeout: 30000 }).catch(() => {});
