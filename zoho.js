@@ -132,8 +132,6 @@ async function run({ includeSecret = false } = {}) {
 
     const listPath = withQuery(c.secretsPath, {
       isAsc: 'true',
-      pageNum: '1',
-      rowPerPage: '50',
       passwordName: c.secretName,
     });
     const list = await zget(c, token, listPath);
