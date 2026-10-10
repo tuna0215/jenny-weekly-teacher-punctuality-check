@@ -112,6 +112,8 @@ async function probe(url) {
     const network = [];
     const requestFailures = [];
     const pageErrors = [];
+    let scheduleRequest;
+    let scheduleResponsePromise;
     const cleanUrl = (rawUrl) => {
       try {
         const parsed = new URL(rawUrl);
@@ -122,6 +124,15 @@ async function probe(url) {
     };
     page.on('response', (response) => {
       const request = response.request();
+      if (response.url().includes('/graphql/TeacherScheduleQuery')) {
+        try {
+          const payload = JSON.parse(request.postData() || '{}');
+          scheduleRequest = { operationName: payload.operationName, variables: payload.variables };
+        } catch {
+          scheduleRequest = { operationName: 'TeacherScheduleQuery', variables: 'unavailable' };
+        }
+        scheduleResponsePromise = response.json().catch(() => undefined);
+      }
       if (network.length < 120 && ['xhr', 'fetch'].includes(request.resourceType())) {
         network.push({ status: response.status(), method: request.method(), url: cleanUrl(response.url()) });
       }
@@ -162,6 +173,24 @@ async function probe(url) {
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       scheduleLinkCount: document.querySelectorAll('a[href^="/sections/"], a[href^="/classroom/"]').length,
     }));
+    const shape = (value, depth = 0) => {
+      if (depth > 6) return '...';
+      if (Array.isArray(value)) return { type: 'array', length: value.length, item: value.length ? shape(value[0], depth + 1) : undefined };
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, shape(child, depth + 1)]));
+      }
+      return value === null ? 'null' : typeof value;
+    };
+    const scheduleResponse = await scheduleResponsePromise;
+    diagnostics.scheduleRequest = scheduleRequest;
+    diagnostics.scheduleResponse = scheduleResponse && {
+      dataShape: shape(scheduleResponse.data),
+      errors: (scheduleResponse.errors || []).map((error) => ({
+        message: String(error.message || '').slice(0, 200),
+        path: error.path,
+        code: error.extensions?.code,
+      })),
+    };
     diagnostics.network = network;
     diagnostics.requestFailures = requestFailures;
     diagnostics.pageErrors = pageErrors;
