@@ -76,6 +76,8 @@ async function run({ includeSecret = false } = {}) {
     const list = await zget(c, token, `${c.secretsPath}?passwordName=${encodeURIComponent(c.secretName)}`);
     const secrets = details(list)?.secrets || details(list)?.SECRETS || list.secrets || [];
     const first = Array.isArray(secrets) ? secrets[0] : undefined;
+    const keysOf = (o) => (o && typeof o === 'object' ? Object.keys(o).slice(0, 15) : typeof o);
+    mark('list_shape', true, `top-level keys: ${JSON.stringify(keysOf(list))}; details keys: ${JSON.stringify(keysOf(details(list)))}; count: ${Array.isArray(secrets) ? secrets.length : 'n/a'}`);
     mark('find_secret', !!first, first ? undefined : `No secret named "${c.secretName}" returned`);
     if (!first) throw new Error('Secret not found');
 
