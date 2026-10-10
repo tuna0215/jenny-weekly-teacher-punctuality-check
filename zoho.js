@@ -28,7 +28,12 @@ async function accessToken(c) {
     refresh_token: c.refreshToken, client_id: c.clientId,
     client_secret: c.clientSecret, grant_type: 'refresh_token',
   });
-  const res = await fetch(`${c.accounts}/oauth/v2/token`, { method: 'POST', body });
+  let res;
+try {
+  res = await fetch(`${c.accounts}/oauth/v2/token`, { method: 'POST', body });
+} catch (e) {
+  throw new Error(`Cannot reach ${c.accounts} (${e.cause?.code || e.cause?.message || e.message})`);
+}
   const j = await res.json().catch(() => ({}));
   if (!j.access_token) throw new Error(`Zoho token refresh failed (HTTP ${res.status}: ${j.error || 'no access_token'})`);
   return j.access_token;
