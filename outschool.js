@@ -110,9 +110,26 @@ async function probe(url) {
   return withPage(async (page, cred) => {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
     await new Promise((r) => setTimeout(r, 2000));
+    if (new URL(url).pathname === '/organization/schedule') {
+      await page.waitForFunction(() =>
+        document.querySelectorAll('a[href^="/sections/"], a[href^="/classroom/"]').length > 1,
+      { timeout: 15000 }).catch(() => {});
+    }
     let text = await page.evaluate(() => document.body.innerText);
-    const links = await page.evaluate(() =>
-      [...document.querySelectorAll('a[href]')].slice(0, 80).map((a) => ({ t: (a.innerText || '').trim().slice(0, 60), h: a.getAttribute('href') })));
+    const links = await page.evaluate(() => {
+      const all = [...document.querySelectorAll('a[href]')];
+      const schedule = all.filter((a) => /^\/(?:sections|classroom)\//.test(a.getAttribute('href') || ''));
+      const seen = new Set();
+      return [...schedule, ...all]
+        .filter((a) => {
+          const key = `${a.getAttribute('href')}\n${(a.innerText || '').trim()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, 160)
+        .map((a) => ({ t: (a.innerText || '').trim().slice(0, 160), h: a.getAttribute('href') }));
+    });
     const media = await page.evaluate(() =>
       [...document.querySelectorAll('video source, video, audio')].map((m) => (m.currentSrc || m.src || '').split('?')[0]).filter(Boolean));
     for (const secret of [cred?.username, cred?.password].filter(Boolean)) text = text.split(secret).join('[redacted]');
