@@ -109,9 +109,14 @@ async function withPage(fn) {
 async function probe(url) {
   return withPage(async (page, cred) => {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
+    await new Promise((r) => setTimeout(r, 2000));
     let text = await page.evaluate(() => document.body.innerText);
+    const links = await page.evaluate(() =>
+      [...document.querySelectorAll('a[href]')].slice(0, 80).map((a) => ({ t: (a.innerText || '').trim().slice(0, 60), h: a.getAttribute('href') })));
+    const media = await page.evaluate(() =>
+      [...document.querySelectorAll('video source, video, audio')].map((m) => (m.currentSrc || m.src || '').split('?')[0]).filter(Boolean));
     for (const secret of [cred?.username, cred?.password].filter(Boolean)) text = text.split(secret).join('[redacted]');
-    return { title: await page.title(), finalUrl: page.url(), text: text.slice(0, 4000) };
+    return { title: await page.title(), finalUrl: page.url(), text: text.slice(0, 4000), links, media };
   });
 }
 
