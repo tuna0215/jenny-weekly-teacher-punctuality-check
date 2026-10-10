@@ -4,7 +4,7 @@ const Vault = require('./zoho-vault-crypto.cjs');
 
 const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d);
 const cfg = () => ({
-  accounts: env('ZOHO_ACCOUNTS_URL', 'https://accounts.zoho.ca'),
+  accounts: env('ZOHO_ACCOUNTS_URL', 'https://accounts.zohocloud.ca'),
   vault: env('ZOHO_VAULT_URL', 'https://vault.zohocloud.ca'),
   clientId: env('ZOHO_CLIENT_ID'),
   clientSecret: env('ZOHO_CLIENT_SECRET'),
