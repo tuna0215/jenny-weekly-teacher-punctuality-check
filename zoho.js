@@ -43,6 +43,14 @@ const operationError = (json) => {
 const secretNameOf = (secret) => secret?.SECRETNAME ?? secret?.secretName ?? secret?.secretname
   ?? secret?.PASSWORDNAME ?? secret?.passwordName ?? secret?.NAME ?? secret?.name;
 
+const withQuery = (path, values) => {
+  const queryAt = path.indexOf('?');
+  const base = queryAt === -1 ? path : path.slice(0, queryAt);
+  const query = new URLSearchParams(queryAt === -1 ? '' : path.slice(queryAt + 1));
+  for (const [key, value] of Object.entries(values)) query.set(key, value);
+  return `${base}?${query}`;
+};
+
 async function accessToken(c) {
   const required = {
     clientId: 'ZOHO_CLIENT_ID',
@@ -122,8 +130,17 @@ async function run({ includeSecret = false } = {}) {
       throw new Error('Master password cannot be validated because PASSPHRASE is missing');
     }
 
-    const list = await zget(c, token, `${c.secretsPath}?passwordName=${encodeURIComponent(c.secretName)}`);
-    const secrets = details(list)?.secrets || details(list)?.SECRETS || list.secrets || [];
+    const listPath = withQuery(c.secretsPath, {
+      isAsc: 'true',
+      pageNum: '1',
+      rowPerPage: '50',
+      passwordName: c.secretName,
+    });
+    const list = await zget(c, token, listPath);
+    const listDetails = details(list);
+    const secrets = Array.isArray(listDetails)
+      ? listDetails
+      : listDetails?.secrets || listDetails?.SECRETS || list.secrets || [];
     const matches = Array.isArray(secrets)
       ? secrets.filter((secret) => secretNameOf(secret) === c.secretName)
       : [];
@@ -142,7 +159,8 @@ async function run({ includeSecret = false } = {}) {
     }
 
     const id = first.SECRETID || first.secretid || first.secretId;
-    const full = id ? details(await zget(c, token, `${c.secretsPath}/${id}`)) : first;
+    const fullDetails = id ? details(await zget(c, token, `${c.secretsPath}/${id}`)) : first;
+    const full = Array.isArray(fullDetails) ? fullDetails[0] : fullDetails;
     const secret = full?.secret || full?.SECRET || full;
     const shared = String(secret.ISSHARED ?? secret.isshared ?? 'NO').toUpperCase() === 'YES';
     mark('secret_type', true, shared ? 'shared (org key)' : 'personal (master key)');
