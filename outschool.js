@@ -182,6 +182,10 @@ async function probe(url) {
       return value === null ? 'null' : typeof value;
     };
     const scheduleResponse = await scheduleResponsePromise;
+    let expectedCredentials = cred;
+    if (!expectedCredentials) {
+      try { expectedCredentials = await loadCredentials(); } catch { /* diagnostics stay available without Zoho */ }
+    }
     diagnostics.scheduleRequest = scheduleRequest;
     diagnostics.scheduleResponse = scheduleResponse && {
       dataShape: shape(scheduleResponse.data),
@@ -191,10 +195,14 @@ async function probe(url) {
         code: error.extensions?.code,
       })),
     };
+    diagnostics.accountMatchesZoho = expectedCredentials
+      ? String(scheduleResponse?.data?.currentUser?.email || '').trim().toLowerCase()
+        === expectedCredentials.username.trim().toLowerCase()
+      : 'unavailable';
     diagnostics.network = network;
     diagnostics.requestFailures = requestFailures;
     diagnostics.pageErrors = pageErrors;
-    for (const secret of [cred?.username, cred?.password].filter(Boolean)) text = text.split(secret).join('[redacted]');
+    for (const secret of [expectedCredentials?.username, expectedCredentials?.password].filter(Boolean)) text = text.split(secret).join('[redacted]');
     return { title: await page.title(), finalUrl: page.url(), text: text.slice(0, 4000), links, media, diagnostics };
   });
 }
