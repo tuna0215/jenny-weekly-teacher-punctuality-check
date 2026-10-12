@@ -17,8 +17,17 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 // Runs the Zoho chain and reports pass/fail per step. Never returns the credentials.
 app.get('/selfcheck', auth, async (_req, res) => res.json(await zoho.run({ includeSecret: false })));
 
-// Stage 2 (not enabled until /selfcheck passes and Outschool selectors are tested on a real page).
-app.post('/classes', auth, (_req, res) => res.status(501).json({ error: 'not implemented yet' }));
+app.post('/classes', auth, async (req, res) => {
+  try {
+    const weekStart = String(req.body?.weekStart || '');
+    const weekEnd = String(req.body?.weekEnd || '');
+    res.json(await outschool.classes(weekStart, weekEnd));
+  } catch (e) {
+    const message = String(e.message || e).slice(0, 300);
+    const status = /weekStart|weekEnd|date range/.test(message) ? 400 : 500;
+    res.status(status).json({ error: message });
+  }
+});
 
 app.post('/probe', auth, async (req, res) => {
   const url = String(req.body?.url || '');
