@@ -109,42 +109,6 @@ async function withPage(fn) {
 // Logs in, opens one Outschool URL, and returns a redacted text snapshot so we can find the right selectors.
 async function probe(url) {
   return withPage(async (page, cred) => {
-    const network = [];
-    const requestFailures = [];
-    const pageErrors = [];
-    let scheduleRequest;
-    let scheduleResponsePromise;
-    const cleanUrl = (rawUrl) => {
-      try {
-        const parsed = new URL(rawUrl);
-        return `${parsed.origin}${parsed.pathname.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/ig, '[id]')}`;
-      } catch {
-        return String(rawUrl).split('?')[0].slice(0, 200);
-      }
-    };
-    page.on('response', (response) => {
-      const request = response.request();
-      if (response.url().includes('/graphql/TeacherScheduleQuery')) {
-        try {
-          const payload = JSON.parse(request.postData() || '{}');
-          scheduleRequest = { operationName: payload.operationName, variables: payload.variables };
-        } catch {
-          scheduleRequest = { operationName: 'TeacherScheduleQuery', variables: 'unavailable' };
-        }
-        scheduleResponsePromise = response.json().catch(() => undefined);
-      }
-      if (network.length < 120 && ['xhr', 'fetch'].includes(request.resourceType())) {
-        network.push({ status: response.status(), method: request.method(), url: cleanUrl(response.url()) });
-      }
-    });
-    page.on('requestfailed', (request) => {
-      if (requestFailures.length < 30) {
-        requestFailures.push({ url: cleanUrl(request.url()), error: request.failure()?.errorText || 'unknown' });
-      }
-    });
-    page.on('pageerror', (error) => {
-      if (pageErrors.length < 20) pageErrors.push(String(error.message || error).slice(0, 300));
-    });
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 45000 });
     await new Promise((r) => setTimeout(r, 2000));
     if (new URL(url).pathname === '/organization/schedule') {
@@ -169,41 +133,14 @@ async function probe(url) {
     });
     const media = await page.evaluate(() =>
       [...document.querySelectorAll('video source, video, audio')].map((m) => (m.currentSrc || m.src || '').split('?')[0]).filter(Boolean));
-    const diagnostics = await page.evaluate(() => ({
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      scheduleLinkCount: document.querySelectorAll('a[href^="/sections/"], a[href^="/classroom/"]').length,
-    }));
-    const shape = (value, depth = 0) => {
-      if (depth > 6) return '...';
-      if (Array.isArray(value)) return { type: 'array', length: value.length, item: value.length ? shape(value[0], depth + 1) : undefined };
-      if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, shape(child, depth + 1)]));
-      }
-      return value === null ? 'null' : typeof value;
-    };
-    const scheduleResponse = await scheduleResponsePromise;
-    let expectedCredentials = cred;
-    if (!expectedCredentials) {
-      try { expectedCredentials = await loadCredentials(); } catch { /* diagnostics stay available without Zoho */ }
+    let redactionCredentials = cred;
+    if (!redactionCredentials) {
+      try { redactionCredentials = await loadCredentials(); } catch { /* keep probing if Zoho is unavailable */ }
     }
-    diagnostics.scheduleRequest = scheduleRequest;
-    diagnostics.scheduleResponse = scheduleResponse && {
-      dataShape: shape(scheduleResponse.data),
-      errors: (scheduleResponse.errors || []).map((error) => ({
-        message: String(error.message || '').slice(0, 200),
-        path: error.path,
-        code: error.extensions?.code,
-      })),
-    };
-    diagnostics.accountMatchesZoho = expectedCredentials
-      ? String(scheduleResponse?.data?.currentUser?.email || '').trim().toLowerCase()
-        === expectedCredentials.username.trim().toLowerCase()
-      : 'unavailable';
-    diagnostics.network = network;
-    diagnostics.requestFailures = requestFailures;
-    diagnostics.pageErrors = pageErrors;
-    for (const secret of [expectedCredentials?.username, expectedCredentials?.password].filter(Boolean)) text = text.split(secret).join('[redacted]');
-    return { title: await page.title(), finalUrl: page.url(), text: text.slice(0, 4000), links, media, diagnostics };
+    for (const secret of [redactionCredentials?.username, redactionCredentials?.password].filter(Boolean)) {
+      text = text.split(secret).join('[redacted]');
+    }
+    return { title: await page.title(), finalUrl: page.url(), text: text.slice(0, 4000), links, media };
   });
 }
 
