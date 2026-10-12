@@ -295,55 +295,60 @@ async function classes(weekStart, weekEnd) {
       .filter((meeting) => meeting.active_enrolled > 0)
       .map((meeting) => meeting.section_id))];
     const recordingsBySection = new Map();
-    const failedSections = [];
-    let nextSection = 0;
     await page.close();
-    const workerCount = Math.min(8, uniqueSections.length);
-    await Promise.all(Array.from({ length: workerCount }, async () => {
-      const workerPage = await browser.newPage();
-      await workerPage.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
-      await workerPage.setRequestInterception(true);
-      workerPage.on('request', (request) => {
-        if (['font', 'image', 'media'].includes(request.resourceType())) request.abort();
-        else request.continue();
-      });
-      try {
-        while (nextSection < uniqueSections.length) {
-          const sectionId = uniqueSections[nextSection];
-          nextSection += 1;
-          try {
-            await workerPage.goto(`https://outschool.com/sections/${sectionId}/recordings`, {
-              waitUntil: 'domcontentloaded',
-              timeout: 20000,
-            });
-            await workerPage.waitForFunction(() =>
-              document.querySelector('a[href*="/recording/"]')
-              || /no recordings|processing/i.test(document.body?.innerText || ''),
-            { timeout: 6000 }).catch(() => {});
-            const pageState = await workerPage.evaluate(() => ({
-              recordings: [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
-                text: (anchor.innerText || '').trim(),
-                href: anchor.href,
-              })),
-              hasEmptyState: /no recordings|processing|not available/i.test(document.body?.innerText || ''),
-              isLogin: /\/users\/login\/?$/.test(window.location.pathname),
-            }));
-            if (pageState.isLogin || (!pageState.recordings.length && !pageState.hasEmptyState)) {
-              throw new Error('recordings page did not reach a recognized state');
+    async function fetchSections(sectionIds, concurrency, readyTimeout) {
+      const failed = [];
+      let nextSection = 0;
+      const workerCount = Math.min(concurrency, sectionIds.length);
+      await Promise.all(Array.from({ length: workerCount }, async () => {
+        const workerPage = await browser.newPage();
+        await workerPage.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
+        await workerPage.setRequestInterception(true);
+        workerPage.on('request', (request) => {
+          if (['font', 'image', 'media'].includes(request.resourceType())) request.abort();
+          else request.continue();
+        });
+        try {
+          while (nextSection < sectionIds.length) {
+            const sectionId = sectionIds[nextSection];
+            nextSection += 1;
+            try {
+              await workerPage.goto(`https://outschool.com/sections/${sectionId}/recordings`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 20000,
+              });
+              await workerPage.waitForFunction(() =>
+                document.querySelector('a[href*="/recording/"]')
+                || /no recordings|processing/i.test(document.body?.innerText || ''),
+              { timeout: readyTimeout }).catch(() => {});
+              const pageState = await workerPage.evaluate(() => ({
+                recordings: [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
+                  text: (anchor.innerText || '').trim(),
+                  href: anchor.href,
+                })),
+                hasEmptyState: /no recordings|processing|not available/i.test(document.body?.innerText || ''),
+                isLogin: /\/users\/login\/?$/.test(window.location.pathname),
+              }));
+              if (pageState.isLogin || (!pageState.recordings.length && !pageState.hasEmptyState)) {
+                throw new Error('recordings page did not reach a recognized state');
+              }
+              recordingsBySection.set(sectionId, pageState.recordings
+                .map((recording) => parseRecordingLink(recording, allowedDates))
+                .filter(Boolean));
+            } catch {
+              failed.push(sectionId);
+              recordingsBySection.set(sectionId, []);
             }
-            const rawRecordings = pageState.recordings;
-            recordingsBySection.set(sectionId, rawRecordings
-              .map((recording) => parseRecordingLink(recording, allowedDates))
-              .filter(Boolean));
-          } catch {
-            failedSections.push(sectionId);
-            recordingsBySection.set(sectionId, []);
           }
+        } finally {
+          await workerPage.close().catch(() => {});
         }
-      } finally {
-        await workerPage.close().catch(() => {});
-      }
-    }));
+      }));
+      return failed;
+    }
+
+    let failedSections = await fetchSections(uniqueSections, 8, 6000);
+    if (failedSections.length) failedSections = await fetchSections(failedSections, 3, 8000);
 
     const warnings = ['Cancellation wording is unverified; cancellation_status is not inferred.'];
     if (failedSections.length) {
