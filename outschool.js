@@ -211,7 +211,7 @@ async function withPage(fn) {
       credentials = await loadCredentials();
       await login(page, credentials);
     }
-    return await fn(page, credentials);
+    return await fn(page, credentials, browser);
   } finally {
     await browser.close().catch(() => {});
   }
@@ -258,7 +258,7 @@ async function probe(url) {
 async function classes(weekStart, weekEnd) {
   const allowedDates = weekDates(weekStart, weekEnd);
   const allowedByKey = Object.fromEntries(allowedDates.map((date) => [dateKey(date), date]));
-  return withPage(async (page) => {
+  return withPage(async (page, _credentials, browser) => {
     const scheduleUrl = `https://outschool.com/organization/schedule?view=agenda&date=${weekStart}`;
     await page.goto(scheduleUrl, { waitUntil: 'networkidle2', timeout: 45000 });
     await page.waitForFunction(() =>
@@ -295,24 +295,47 @@ async function classes(weekStart, weekEnd) {
       .filter((meeting) => meeting.active_enrolled > 0)
       .map((meeting) => meeting.section_id))];
     const recordingsBySection = new Map();
+    const failedSections = [];
+    let nextSection = 0;
+    await page.close();
+    const workerCount = Math.min(6, uniqueSections.length);
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      const workerPage = await browser.newPage();
+      await workerPage.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
+      try {
+        while (nextSection < uniqueSections.length) {
+          const sectionId = uniqueSections[nextSection];
+          nextSection += 1;
+          try {
+            await workerPage.goto(`https://outschool.com/sections/${sectionId}/recordings`, {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000,
+            });
+            await workerPage.waitForFunction(() =>
+              document.querySelector('a[href*="/recording/"]')
+              || /no recordings|processing/i.test(document.body?.innerText || ''),
+            { timeout: 5000 }).catch(() => {});
+            const rawRecordings = await workerPage.evaluate(() =>
+              [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
+                text: (anchor.innerText || '').trim(),
+                href: anchor.href,
+              })));
+            recordingsBySection.set(sectionId, rawRecordings
+              .map((recording) => parseRecordingLink(recording, allowedDates))
+              .filter(Boolean));
+          } catch {
+            failedSections.push(sectionId);
+            recordingsBySection.set(sectionId, []);
+          }
+        }
+      } finally {
+        await workerPage.close().catch(() => {});
+      }
+    }));
 
-    for (const sectionId of uniqueSections) {
-      await page.goto(`https://outschool.com/sections/${sectionId}/recordings`, {
-        waitUntil: 'domcontentloaded',
-        timeout: 45000,
-      });
-      await page.waitForFunction(() =>
-        document.querySelector('a[href*="/recording/"]')
-        || /no recordings|processing/i.test(document.body?.innerText || ''),
-      { timeout: 6000 }).catch(() => {});
-      const rawRecordings = await page.evaluate(() =>
-        [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
-          text: (anchor.innerText || '').trim(),
-          href: anchor.href,
-        })));
-      recordingsBySection.set(sectionId, rawRecordings
-        .map((recording) => parseRecordingLink(recording, allowedDates))
-        .filter(Boolean));
+    const warnings = ['Cancellation wording is unverified; cancellation_status is not inferred.'];
+    if (failedSections.length) {
+      warnings.push(`${failedSections.length} section recording page(s) could not be loaded; those classes require review.`);
     }
 
     return {
@@ -321,7 +344,7 @@ async function classes(weekStart, weekEnd) {
       weekStart,
       weekEnd,
       classes: attachRecordings(meetings, recordingsBySection),
-      warnings: ['Cancellation wording is unverified; cancellation_status is not inferred.'],
+      warnings,
     };
   });
 }
