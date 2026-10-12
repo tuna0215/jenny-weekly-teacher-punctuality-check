@@ -260,7 +260,7 @@ async function classes(weekStart, weekEnd) {
   const allowedByKey = Object.fromEntries(allowedDates.map((date) => [dateKey(date), date]));
   return withPage(async (page, _credentials, browser) => {
     const scheduleUrl = `https://outschool.com/organization/schedule?view=agenda&date=${weekStart}`;
-    await page.goto(scheduleUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+    await page.goto(scheduleUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForFunction(() =>
       [...document.querySelectorAll('a[href^="/classroom/"]')]
         .some((anchor) => /\d{1,2}:\d{2}/.test(anchor.innerText || '')),
@@ -298,10 +298,15 @@ async function classes(weekStart, weekEnd) {
     const failedSections = [];
     let nextSection = 0;
     await page.close();
-    const workerCount = Math.min(6, uniqueSections.length);
+    const workerCount = Math.min(12, uniqueSections.length);
     await Promise.all(Array.from({ length: workerCount }, async () => {
       const workerPage = await browser.newPage();
       await workerPage.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
+      await workerPage.setRequestInterception(true);
+      workerPage.on('request', (request) => {
+        if (['font', 'image', 'media'].includes(request.resourceType())) request.abort();
+        else request.continue();
+      });
       try {
         while (nextSection < uniqueSections.length) {
           const sectionId = uniqueSections[nextSection];
@@ -309,12 +314,12 @@ async function classes(weekStart, weekEnd) {
           try {
             await workerPage.goto(`https://outschool.com/sections/${sectionId}/recordings`, {
               waitUntil: 'domcontentloaded',
-              timeout: 30000,
+              timeout: 20000,
             });
             await workerPage.waitForFunction(() =>
               document.querySelector('a[href*="/recording/"]')
               || /no recordings|processing/i.test(document.body?.innerText || ''),
-            { timeout: 5000 }).catch(() => {});
+            { timeout: 2000 }).catch(() => {});
             const rawRecordings = await workerPage.evaluate(() =>
               [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
                 text: (anchor.innerText || '').trim(),
