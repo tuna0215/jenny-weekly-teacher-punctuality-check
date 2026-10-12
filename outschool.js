@@ -298,7 +298,7 @@ async function classes(weekStart, weekEnd) {
     const failedSections = [];
     let nextSection = 0;
     await page.close();
-    const workerCount = Math.min(12, uniqueSections.length);
+    const workerCount = Math.min(8, uniqueSections.length);
     await Promise.all(Array.from({ length: workerCount }, async () => {
       const workerPage = await browser.newPage();
       await workerPage.emulateTimezone(process.env.OUTSCHOOL_TIMEZONE || 'America/New_York');
@@ -319,12 +319,19 @@ async function classes(weekStart, weekEnd) {
             await workerPage.waitForFunction(() =>
               document.querySelector('a[href*="/recording/"]')
               || /no recordings|processing/i.test(document.body?.innerText || ''),
-            { timeout: 2000 }).catch(() => {});
-            const rawRecordings = await workerPage.evaluate(() =>
-              [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
+            { timeout: 6000 }).catch(() => {});
+            const pageState = await workerPage.evaluate(() => ({
+              recordings: [...document.querySelectorAll('a[href*="/recording/"]')].map((anchor) => ({
                 text: (anchor.innerText || '').trim(),
                 href: anchor.href,
-              })));
+              })),
+              hasEmptyState: /no recordings|processing|not available/i.test(document.body?.innerText || ''),
+              isLogin: /\/users\/login\/?$/.test(window.location.pathname),
+            }));
+            if (pageState.isLogin || (!pageState.recordings.length && !pageState.hasEmptyState)) {
+              throw new Error('recordings page did not reach a recognized state');
+            }
+            const rawRecordings = pageState.recordings;
             recordingsBySection.set(sectionId, rawRecordings
               .map((recording) => parseRecordingLink(recording, allowedDates))
               .filter(Boolean));
