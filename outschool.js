@@ -255,8 +255,8 @@ async function probe(url) {
   });
 }
 
-async function classes(weekStart, weekEnd) {
-  const allowedDates = weekDates(weekStart, weekEnd);
+async function classesForDates(allowedDates) {
+  const weekStart = allowedDates[0];
   const allowedByKey = Object.fromEntries(allowedDates.map((date) => [dateKey(date), date]));
   return withPage(async (page, _credentials, browser) => {
     const scheduleUrl = `https://outschool.com/organization/schedule?view=agenda&date=${weekStart}`;
@@ -350,20 +350,40 @@ async function classes(weekStart, weekEnd) {
     let failedSections = await fetchSections(uniqueSections, 8, 6000);
     if (failedSections.length) failedSections = await fetchSections(failedSections, 3, 8000);
 
-    const warnings = ['Cancellation wording is unverified; cancellation_status is not inferred.'];
-    if (failedSections.length) {
-      warnings.push(`${failedSections.length} section recording page(s) could not be loaded; those classes require review.`);
-    }
-
     return {
-      source: 'outschool_organization_schedule',
-      timeZone: 'America/New_York',
-      weekStart,
-      weekEnd,
       classes: attachRecordings(meetings, recordingsBySection),
-      warnings,
+      failedSectionCount: failedSections.length,
     };
   });
+}
+
+async function classes(weekStart, weekEnd) {
+  const allowedDates = weekDates(weekStart, weekEnd);
+  const dailyResults = new Array(allowedDates.length);
+  let nextDate = 0;
+  const workerCount = Math.min(3, allowedDates.length);
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextDate < allowedDates.length) {
+      const index = nextDate;
+      nextDate += 1;
+      dailyResults[index] = await classesForDates([allowedDates[index]]);
+    }
+  }));
+
+  const failedSectionCount = dailyResults
+    .reduce((total, result) => total + result.failedSectionCount, 0);
+  const warnings = ['Cancellation wording is unverified; cancellation_status is not inferred.'];
+  if (failedSectionCount) {
+    warnings.push(`${failedSectionCount} section recording page(s) could not be loaded; those classes require review.`);
+  }
+  return {
+    source: 'outschool_organization_schedule',
+    timeZone: 'America/New_York',
+    weekStart,
+    weekEnd,
+    classes: dailyResults.flatMap((result) => result.classes),
+    warnings,
+  };
 }
 
 module.exports = {
