@@ -2,7 +2,7 @@
 
 // Independent, Node.js-compatible implementation of the formats used by
 // Zoho Vault's public web bundle and @zohocorporation/vault-cli 1.1.4.
-// It is not copied Zoho source. See zoho-vault-crypto-report.md for evidence.
+// It is not copied Zoho source; compatibility is verified by the test suite.
 
 const crypto = require('node:crypto');
 
@@ -145,10 +145,6 @@ function decrypt(ciphertext, password) {
   return legacyUtf8Decode(plaintext);
 }
 
-function base64UrlToBuffer(value) {
-  return Buffer.from(value, 'base64url');
-}
-
 function hexComponentToBase64Url(value) {
   const normalized = value.length % 2 ? `0${value}` : value;
   let bytes = Buffer.from(normalized, 'hex');
@@ -219,7 +215,6 @@ module.exports = {
   RSA_decrypt_1024,
   RSA_decrypt_4096,
   _internals: {
-    base64UrlToBuffer,
     legacyUtf8Decode,
     legacyUtf8Encode,
     zohoAes256Key,
