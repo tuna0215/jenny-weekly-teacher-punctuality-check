@@ -1,6 +1,6 @@
 # Weekly Teacher Punctuality Automation
 
-Automatically checks the previous week's Outschool classes against their recordings, flags punctuality incidents for human review, and updates a Google Sheets tracker only after approval.
+Automatically checks the previous week's Outschool classes against their recordings and writes confirmed punctuality results to Google Sheets.
 
 ## System flow
 
@@ -19,41 +19,34 @@ flowchart TD
     D -- No --> K[Evaluate punctuality]
     K --> L{{Any incidents?}}
     L -- No --> M[Mark verified days<br/>as checked]
-    L -- Yes --> N[Upsert incidents into<br/>Google Sheets Review tab]
-    N --> O[Wait for human decision]
-    O --> P{{Approved?}}
-    P -- No --> Q[Stop without changing<br/>the tracker]
-    P -- Yes --> R[Write confirmed incidents<br/>to monthly tracker]
-    R --> M
+    L -- Yes --> N[Build confirmed<br/>tracker rows]
+    N --> O{{Confirmed rows?}}
+    O -- Yes --> P[Write incidents to<br/>monthly tracker]
+    O -- No --> M
+    P --> M
 ```
 
 ## Components
 
 | Component | Responsibility |
 | --- | --- |
-| n8n | Scheduling, seven-day loop, retries, incident evaluation, approval gate, and Google Sheets updates |
+| n8n | Scheduling, seven-day loop, retries, deterministic incident evaluation, and Google Sheets updates |
 | Render service | Authenticated API used by n8n to collect Outschool schedule and recording data |
 | Browserless | Remote browser used to access authenticated Outschool pages |
 | Zoho Vault | Stores and decrypts the Outschool username and password at runtime |
-| Google Sheets | Review queue, approved punctuality tracker, and checked-day state |
+| Google Sheets | Monthly punctuality tracker and checked-day state |
 
-## Analysis and approval ownership
+## Automated analysis and writes
 
 No AI model or AI agent performs the punctuality analysis. The automation uses deterministic code and fixed thresholds:
 
 1. The Render service reads the Outschool schedule and recording pages, parses their timestamps, and matches each recording to the closest scheduled meeting.
 2. The n8n **Evaluate Punctuality** Code node compares scheduled and recorded times and classifies each result using the rules below.
-3. A human reviews the generated evidence in the Google Sheet before any confirmed incident is written to the official tracker.
+3. Confirmed late and early-out incidents are written directly to the appropriate monthly tracker sheet.
+4. Missing, processing, incomplete, or invalid recording data is classified as **Needs Review** and excluded from automatic incident writes.
+5. A day with unresolved recording data is not marked checked. Other fully evaluated days are marked checked automatically.
 
-Human approval is completed through an n8n form:
-
-1. **Write Review Tab** upserts each incident into the spreadsheet's **Review** tab.
-2. The row includes the incident details, recording link, and an **Approval Link**.
-3. The reviewer opens that link, checks the Review tab and recording evidence, and selects **Approve** or **Reject**.
-4. **Wait for Human Approval** accepts one decision for the workflow run and waits for at most three days.
-5. **Approved?** allows only an exact **Approve** decision to continue to the official tracker. Rejecting or not approving stops that write path.
-
-The code identifies potential incidents; the human reviewer owns the final judgment and authorization.
+The existing **Review** sheet is retained only as historical data from the former approval process. The active workflow no longer reads or writes it.
 
 ## n8n node responsibilities
 
@@ -65,17 +58,13 @@ The code identifies potential incidents; the human reviewer owns the final judgm
 | 4 | **Process Days One at a Time** | Runs the seven requests sequentially with a batch size of one. After the final day, it releases the collected results to evaluation. |
 | 5 | **Fetch Outschool Recording Data** | Calls the Render service's authenticated POST /classes endpoint for the current day. It makes up to three attempts, waits 30 seconds between attempts, and allows five minutes per attempt. |
 | 6 | **Browserless Cooldown** | Waits 15 seconds after each daily response before starting the next Browserless-backed request. |
-| 7 | **Evaluate Punctuality** | Deterministically combines all daily responses, ignores zero-enrollment classes, calculates late/early minutes, creates stable incident keys, labels incomplete data as **Needs Review**, and lists only fully verified days as safe to mark checked. |
-| 8 | **Any Issues Found?** | Routes runs with one or more incidents to human review. Runs with no incidents skip review and proceed directly to marking verified days checked. |
-| 9 | **Split Incidents** | Converts the incident array into one n8n item per incident so each can be written as a separate Review row. |
-| 10 | **Write Review Tab** | Appends or updates the Google Sheet's **Review** tab using **Incident Key** as the unique match field. Writes the evidence and n8n approval-form link without duplicating an existing incident. |
-| 11 | **Wait for Human Approval** | Pauses the run and serves the **Approve punctuality results** form with required **Approve** and **Reject** choices. The wait limit is three days and the node runs once for the workflow execution. |
-| 12 | **Approved?** | Continues only when the submitted decision exactly equals **Approve**. The Reject/non-approve branch has no tracker-write connection. |
-| 13 | **Build Tracker Rows** | Removes **Needs Review** items, groups confirmed incidents by date, and formats the teacher, class/time, details, and recording-link fields expected by each monthly sheet. |
-| 14 | **Confirmed Tracker Rows?** | Sends confirmed rows to the tracker update. If every incident still needs review, it skips the incident write and continues only with eligible checked-day updates. |
-| 15 | **Update Tracker** | Updates the appropriate monthly sheet by matching the day in the **Date** column and writing approved incident details plus Checked = true. |
-| 16 | **List Days to Mark** | Creates one minimal sheet-name, Date, and Checked item for every day that has no unresolved recording review. |
-| 17 | **Mark Days Checked** | Updates those monthly-sheet dates to Checked = true. Days with unresolved recording or timing data are excluded. |
+| 7 | **Evaluate Punctuality** | Deterministically combines all daily responses, ignores zero-enrollment classes, calculates late/early minutes, labels incomplete data as **Needs Review**, and lists only fully verified days as safe to mark checked. |
+| 8 | **Any Issues Found?** | Routes runs with incidents to automatic tracker-row preparation. Runs with no incidents proceed directly to marking verified days checked. |
+| 9 | **Build Tracker Rows** | Removes **Needs Review** items, groups confirmed incidents by date, and formats the teacher, class/time, details, and recording-link fields expected by each monthly sheet. |
+| 10 | **Confirmed Tracker Rows?** | Sends confirmed rows to the tracker update. If every incident still needs review, it skips the incident write and continues only with eligible checked-day updates. |
+| 11 | **Update Tracker** | Updates the appropriate monthly sheet by matching the day in the **Date** column and writing confirmed incident details plus Checked = true. |
+| 12 | **List Days to Mark** | Creates one minimal sheet-name, Date, and Checked item for every day that has no unresolved recording data. |
+| 13 | **Mark Days Checked** | Updates those monthly-sheet dates to Checked = true. Days with unresolved recording or timing data are excluded. |
 
 ## Punctuality rules
 
@@ -85,7 +74,8 @@ The code identifies potential incidents; the human reviewer owns the final judgm
 - Classes with zero active learners are ignored.
 - Cancellation status is not inferred from Outschool text.
 - Days with unresolved recording data are not marked as checked.
-- The tracker is never updated without explicit human approval.
+- Confirmed incidents and fully verified days are written automatically.
+- **Needs Review** incidents are not written to the monthly tracker.
 
 All Outschool schedule and recording times are interpreted in `America/New_York`; workflow scheduling uses `Asia/Manila`.
 
@@ -150,7 +140,7 @@ The API key and all other secrets must stay in Render/n8n credentials. Do not co
 - API errors are bounded to 300 characters; credential values are never returned by `/selfcheck`.
 - Render automatically deploys commits pushed to `main`.
 
-The n8n workflow is intentionally inactive until it is explicitly published. Publishing enables the Monday 8:00 PM Manila schedule.
+The n8n workflow is active and runs every Monday at 8:00 PM Manila time.
 
 ## Local development
 
@@ -180,7 +170,7 @@ node --check server.js
 - Eastern-to-Manila conversion across daylight-saving changes.
 - Zoho Vault PBKDF2, AES, RSA-1024, and RSA-4096 compatibility.
 
-The live Google Sheets write and human-approval path should be tested only with explicit authorization because it changes production data.
+Workflow simulations pin the Google Sheets nodes so routing and transformations can be tested without changing production data.
 
 ## Operational checks
 
