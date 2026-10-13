@@ -61,7 +61,10 @@ function parseAgendaMeeting(raw) {
     throw new Error('agenda meeting format is unsupported');
   }
   const [year, month, day] = String(raw.date).split('-').map(Number);
-  const [scheduledRange] = meeting.slice(1);
+  const scheduledRange = meeting[1].match(
+    /\d{1,2}:\d{2}\s*(?:AM|PM)?\s*[\u2012\u2013\u2014\u2212-]\s*\d{1,2}:\d{2}\s*(?:AM|PM)/i,
+  )?.[0];
+  if (!scheduledRange) throw new Error('agenda meeting time is unsupported');
   const scheduled = parseEasternRecordingTime(
     `${MONTH_LABELS[month - 1]} ${day}, ${year}, ${scheduledRange} Eastern`,
     year,

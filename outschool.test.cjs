@@ -78,6 +78,22 @@ test('parses an agenda meeting without inferring cancellation', () => {
   );
 });
 
+test('ignores a leading agenda status when parsing the scheduled time', () => {
+  const meeting = parseAgendaMeeting({
+    date: '2026-09-21',
+    href: '/classroom/11111111-2222-4333-8444-555555555555',
+    lines: [
+      'Example Class',
+      'Updated 3:00 – 3:50 PM Eastern · 4th meeting of 12',
+      'Example Teacher · 3 enrolled',
+    ],
+  });
+  assert.equal(meeting.scheduled_time_eastern, '3:00 – 3:50 PM');
+  assert.equal(meeting.scheduled_start, '2026-09-22T03:00:00+08:00');
+  assert.equal(meeting.scheduled_end, '2026-09-22T03:50:00+08:00');
+  assert.equal(meeting.cancellation_status, 'unverified');
+});
+
 test('parses and matches a recording to the closest meeting', () => {
   const recording = parseRecordingLink({
     text: 'Mon, Sep 21, 8:58 – 9:51 AM Eastern, Example Teacher',
