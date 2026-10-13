@@ -360,15 +360,9 @@ async function classesForDates(allowedDates) {
 async function classes(weekStart, weekEnd) {
   const allowedDates = weekDates(weekStart, weekEnd);
   const dailyResults = new Array(allowedDates.length);
-  let nextDate = 0;
-  const workerCount = Math.min(3, allowedDates.length);
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextDate < allowedDates.length) {
-      const index = nextDate;
-      nextDate += 1;
-      dailyResults[index] = await classesForDates([allowedDates[index]]);
-    }
-  }));
+  for (let index = 0; index < allowedDates.length; index += 1) {
+    dailyResults[index] = await classesForDates([allowedDates[index]]);
+  }
 
   const failedSectionCount = dailyResults
     .reduce((total, result) => total + result.failedSectionCount, 0);
